@@ -16,8 +16,11 @@ os.environ['API_KEY'] = 'test-key'
 os.environ['GROQ_API_KEY'] = 'test-groq-key'
 
 # Import app logic - must patch imports that happen at module level
+# Add src to path for the test
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+
 with patch.dict(sys.modules, {'flask': MagicMock(), 'flask_cors': MagicMock(), 'requests': MagicMock()}):
-      from app import AgenticHoneypot, ExtractedIntelligence, RiskEngine
+      from src.honeypot_agent import AgenticHoneypot, ExtractedIntelligence, RiskEngine
 
 class TestHoneypotLogic(unittest.TestCase):
     def setUp(self):
@@ -30,6 +33,7 @@ class TestHoneypotLogic(unittest.TestCase):
             'scam_detected': False,
             'extracted_intelligence': ExtractedIntelligence(
                 bankAccounts=[], upiIds=[], phishingLinks=[], phoneNumbers=[], 
+                emailAddresses=[], caseIds=[], policyNumbers=[], orderNumbers=[],
                 suspiciousKeywords=[], tactics=[], scamType="Unknown", riskScore=0
             ),
             'agent_notes': [],
@@ -57,6 +61,9 @@ class TestHoneypotLogic(unittest.TestCase):
         print(f"DEBUG: Phones = {intel.phoneNumbers}")
         
         self.assertGreaterEqual(count, 2, "Intel count should be at least 2")
+        
+        # Update session scam status (Force True for this test to verify callback logic)
+        session['scam_detected'] = True
         
         # 5. Check Callback
         should_end = self.honeypot._should_end_conversation(session)

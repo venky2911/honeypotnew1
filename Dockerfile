@@ -13,4 +13,4 @@ COPY . .
 EXPOSE 5000
 
 # Run the application directly
-CMD ["python", "app.py"]
+CMD ["python", "src/main.py"]
