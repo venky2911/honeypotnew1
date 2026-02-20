@@ -12,5 +12,5 @@ COPY . .
 # Expose the port (Railway sets PORT env var, but good practice to expose generic)
 EXPOSE 5000
 
-# Run the application directly
-CMD ["python", "src/main.py"]
+# Run the application using gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "src.main:app"]
