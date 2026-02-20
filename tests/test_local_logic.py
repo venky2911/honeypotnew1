@@ -1,6 +1,9 @@
-import unittest
 import sys
 import os
+import unittest
+# Add parent directory to path so we can import src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import json
 from unittest.mock import MagicMock, patch
 

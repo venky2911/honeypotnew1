@@ -346,7 +346,8 @@ class AgenticHoneypot:
                 'extracted_intelligence': ExtractedIntelligence([], [], [], [], [], [], [], [], []),
                 'agent_notes': [],
                 'persona': random.choice(self.personas), # Feature 8: Random Persona
-                'callback_sent': False # Fix: Callback Safety
+                'callback_sent': False, # Fix: Callback Safety
+                'created_at': datetime.now().isoformat()
             }
             # Initial Save
             self._save_session(session_id, session_data)

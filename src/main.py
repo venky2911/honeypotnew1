@@ -35,10 +35,18 @@ def authenticate_request():
         return False
     return True
 
-@app.route('/api/honeypot', methods=['POST', 'OPTIONS'])
+@app.route('/api/honeypot', methods=['GET', 'POST', 'OPTIONS'])
 def honeypot_endpoint():
     """Main honeypot API endpoint"""
     
+    # Handle GET requests (e.g., when tested via browser)
+    if request.method == 'GET':
+        return jsonify({
+            "status": "success",
+            "message": "Agentic Honeypot API is active. Please use POST to send messages.",
+            "version": "2.0.0"
+        }), 200
+
     # Handle CORS preflight explicitly if needed (though flask-cors handles it usually)
     if request.method == 'OPTIONS':
         return jsonify({"status": "success"}), 200
