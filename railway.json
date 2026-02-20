@@ -4,8 +4,8 @@
         "builder": "DOCKERFILE"
     },
     "deploy": {
-        "startCommand": "gunicorn --bind 0.0.0.0:$PORT src.main:app",
-        "healthcheckPath": "/health",
+        "startCommand": "sh -c 'gunicorn --bind 0.0.0.0:$PORT src.main:app'",
+        "healthcheckPath": "/api/honeypot",
         "healthcheckTimeout": 100,
         "restartPolicyType": "ON_FAILURE"
     }

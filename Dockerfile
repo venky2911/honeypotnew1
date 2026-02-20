@@ -13,4 +13,4 @@ COPY . .
 EXPOSE 5000
 
 # Run the application using gunicorn for production
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "src.main:app"]
+CMD gunicorn --bind 0.0.0.0:$PORT src.main:app
