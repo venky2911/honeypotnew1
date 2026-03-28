@@ -17,41 +17,30 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyAnv8Ne4xD4L4TZsdOwHOjdlKYY1b6UpE0')
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# Try to import Groq (optional, handled in logic)
-try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
-    print("Groq not available. Using fallback responses only.")
-
-# Initialize Groq client check
-groq_client = None
-if GROQ_API_KEY:
+# Try to check Gemini API availability
+gemini_available = False
+if GEMINI_API_KEY:
     try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
         test_response = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            },
+            url,
+            headers={"Content-Type": "application/json"},
             json={
-                "messages": [{"role": "user", "content": "test"}],
-                "model": "llama-3.1-8b-instant",
-                "max_tokens": 5
+                "contents": [{"parts": [{"text": "Reply with 'OK' if you are active."}]}],
+                "generationConfig": {"maxOutputTokens": 5}
             },
             timeout=5
         )
         if test_response.status_code == 200:
-            groq_client = "available"
-            logger.info("Groq API initialized successfully via HTTP")
+            gemini_available = True
+            logger.info("Gemini API initialized successfully")
         else:
-            logger.warning(f"Groq API test failed: {test_response.status_code}")
+            logger.warning(f"Gemini API test failed: {test_response.status_code} - {test_response.text}")
     except Exception as e:
-        logger.warning(f"Groq API test failed: {e}")
+        logger.warning(f"Gemini API test failed: {e}")
         logger.info("Falling back to rule-based responses")
 
 @dataclass
@@ -235,77 +224,72 @@ class AgenticHoneypot:
         ]
     
     def get_ai_response(self, message: str, conversation_history: List[Dict], persona: str = "curious_user") -> str:
-        """Generate AI response using Groq or fallback to rule-based"""
-        if groq_client == "available":
-            return self._get_groq_response(message, conversation_history, persona)
+        """Generate AI response using Gemini or fallback to rule-based"""
+        if gemini_available:
+            return self._get_gemini_response(message, conversation_history, persona)
         else:
             return self._get_fallback_response(message, conversation_history)
     
-    def _get_groq_response(self, message: str, conversation_history: List[Dict], persona: str) -> str:
-        """Generate response using Groq API with FULL CONTEXT MEMORY"""
+    def _get_gemini_response(self, message: str, conversation_history: List[Dict], persona: str) -> str:
+        """Generate response using Gemini API with FULL CONTEXT MEMORY"""
         try:
             # Build conversation context
             system_prompt = self._build_context(persona)
             
-            # Prepare messages list with System Prompt
-            messages = [{"role": "system", "content": system_prompt}]
+            # Prepare Gemini contents format
+            contents = []
             
-            # Add History (Multi-Turn Fix)
+            # History
             for msg in conversation_history:
-                role = "user" if msg.get('sender') == 'user' else "assistant"
-                # Avoid adding system messages or metadata to the prompt flow if stored in history
                 if msg.get('text'):
-                     messages.append({"role": role, "content": msg['text']})
+                    role = "user" if msg.get('sender') == 'user' else "model"
+                    contents.append({"role": role, "parts": [{"text": msg['text']}]})
             
-            # Add Current Message
-            messages.append({"role": "user", "content": message})
+            # Current Message
+            contents.append({"role": "user", "parts": [{"text": message}]})
             
-            headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            }
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
             
             payload = {
-                "messages": messages,
-                "model": "llama-3.1-8b-instant",
-                "max_tokens": 150,
-                "temperature": 0.7
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "contents": contents,
+                "generationConfig": {
+                    "maxOutputTokens": 150,
+                    "temperature": 0.7
+                }
             }
             
-            response = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=10
-            )
+            response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
-                return result["choices"][0]["message"]["content"].strip()
+                # Extract text from Gemini structure
+                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
             else:
-                logger.error(f"Groq API error: {response.status_code}")
+                logger.error(f"Gemini API error: {response.status_code} - {response.text}")
                 return self._get_fallback_response(message, conversation_history)
         
         except Exception as e:
-            logger.error(f"Groq API error: {e}")
+            logger.error(f"Gemini Exception: {e}")
             return self._get_fallback_response(message, conversation_history)
     
     def _build_context(self, persona: str) -> str:
-        """Build context for AI agent based on Persona"""
+        """Build context for AI agent based on Indian Persona"""
         persona_contexts = {
-            "curious_user": "You are a cautious but curious user. Ask 1 question at a time. Never reveal you know it's a scam.",
-            "concerned_customer": "You are worried about your account security. Act panicky but ask for specific verify steps. Do not expose the honeypot.",
-            "tech_naive_person": "You are bad with technology. Ask what 'OTP' or 'UPI' means. Waste their time with simple questions.",
-            "elderly_victim": "You are an elderly person, slow to understand. Ask them to repeat. Complain about your glasses or hearing.",
-            "busy_professional": "You are in a rush. Ask for the 'bottom line'. Demand a quick fix but be skeptical."
+            "curious_user": "You are a cautious but curious Indian user named Rahul from Pune. Ask 1 question at a time. Act confused about banking terminologies like NEFT or UPI. Never reveal you know it's a scam.",
+            "concerned_customer": "You are a panicked SBI customer named Amit. You're worried about your account security. Use subtle Indian English ('kindly do the needful', 'I am having tension'). Ask for specific verify steps. Do not expose the honeypot.",
+            "tech_naive_person": "You are bad with technology, a shopkeeper named Ramesh in Delhi. Ask what 'OTP' or 'UPI scanner' means. Say you only know how to use WhatsApp. Waste their time with simple questions.",
+            "elderly_victim": "You are an elderly pensioner named Uncle Sharma from Bangalore. You are slow to understand. Ask them to repeat. Complain about your glasses, say your grandson handles the 'Paytm'.",
+            "busy_professional": "You are a busy IT professional in Hyderabad in a meeting. Ask for the 'bottom line'. Demand a quick fix but be skeptical. Threaten to call the police cyber cell if they push too hard."
         }
-        base_instr = "\nGoal: Keep the scammer engaged as long as possible to extract UPI IDs and Phone Numbers. Be concise."
+        base_instr = "\nGoal: Keep the scammer engaged as long as possible to extract UPI IDs, Bank Accounts, and Phone Numbers. Keep responses extremely realistic, human-like, and strictly under 2 sentences. React specifically to what they just said."
         return persona_contexts.get(persona, persona_contexts["curious_user"]) + base_instr
     
     def _get_fallback_response(self, message: str, conversation_history: List[Dict]) -> str:
         # Simple fallback (kept same)
-        if 'otp' in message.lower(): return "I am not receiving the OTP. Can you send it again?"
-        return "I am confused. Can you explain that clearly?"
+        if 'otp' in message.lower(): return "Bhaiya, I am not receiving the OTP. Can you send it again on SMS?"
+        if 'money' in message.lower() or 'pay' in message.lower(): return "I don't have that much balance right now. Can I pay later?"
+        return "Sorry, I am unable to understand properly. Can you explain in simple words?"
 
     def _transcribe_audio(self, audio_file) -> str:
         """Transcribe audio using Groq Whisper API via direct HTTP"""
