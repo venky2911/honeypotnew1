@@ -8,10 +8,11 @@ from dataclasses import dataclass, asdict
 import random
 from datetime import datetime
 import threading
+import random
+from datetime import datetime
+import threading
 from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+import google.generativeai as genai
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,28 +21,8 @@ logger = logging.getLogger(__name__)
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyAnv8Ne4xD4L4TZsdOwHOjdlKYY1b6UpE0')
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# Try to check Gemini API availability
-gemini_available = False
-if GEMINI_API_KEY:
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-        test_response = requests.post(
-            url,
-            headers={"Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": "Reply with 'OK' if you are active."}]}],
-                "generationConfig": {"maxOutputTokens": 5}
-            },
-            timeout=5
-        )
-        if test_response.status_code == 200:
-            gemini_available = True
-            logger.info("Gemini API initialized successfully")
-        else:
-            logger.warning(f"Gemini API test failed: {test_response.status_code} - {test_response.text}")
-    except Exception as e:
-        logger.warning(f"Gemini API test failed: {e}")
-        logger.info("Falling back to rule-based responses")
+# Determine if Gemini is configured
+gemini_available = bool(GEMINI_API_KEY)
 
 @dataclass
 class ExtractedIntelligence:
@@ -231,46 +212,50 @@ class AgenticHoneypot:
             return self._get_fallback_response(message, conversation_history)
     
     def _get_gemini_response(self, message: str, conversation_history: List[Dict], persona: str) -> str:
-        """Generate response using Gemini API with FULL CONTEXT MEMORY"""
+        """Generate response using official Gemini SDK with FULL CONTEXT MEMORY"""
         try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            
             # Build conversation context
             system_prompt = self._build_context(persona)
             
-            # Prepare Gemini contents format
+            # Use gemini-1.5-flash as it is most stable for free tiers
+            model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_prompt)
+            
+            # Prepare Gemini contents format (SDK uses dicts of role and parts)
             contents = []
             
             # History
             for msg in conversation_history:
                 if msg.get('text'):
                     role = "user" if msg.get('sender') == 'user' else "model"
-                    contents.append({"role": role, "parts": [{"text": msg['text']}]})
+                    contents.append({'role': role, 'parts': [msg['text']]})
             
-            # Current Message
-            contents.append({"role": "user", "parts": [{"text": message}]})
+            # Add Current Message
+            contents.append({'role': 'user', 'parts': [message]})
             
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+            # Generate Response
+            response = model.generate_content(
+                contents,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=150,
+                    temperature=0.7,
+                ),
+            )
             
-            payload = {
-                "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "contents": contents,
-                "generationConfig": {
-                    "maxOutputTokens": 150,
-                    "temperature": 0.7
-                }
-            }
-            
-            response = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=10)
-            
-            if response.status_code == 200:
-                result = response.json()
-                # Extract text from Gemini structure
-                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-            else:
-                logger.error(f"Gemini API error: {response.status_code} - {response.text}")
-                return self._get_fallback_response(message, conversation_history)
+            # Check for block or missing text due to safety
+            if not response.text:
+                 logger.error("Gemini API returned empty/blocked response.")
+                 return self._get_fallback_response(message, conversation_history)
+                 
+            return response.text.strip()
         
         except Exception as e:
-            logger.error(f"Gemini Exception: {e}")
+            # Check specifically for Quota Exceeded (429) to log it clearly
+            if '429' in str(e) or 'quota' in str(e).lower():
+                logger.error(f"GEMINI QUOTA EXCEEDED (429): Your free tier credits are used up. {e}")
+            else:
+                logger.error(f"Gemini SDK Exception: {e}")
             return self._get_fallback_response(message, conversation_history)
     
     def _build_context(self, persona: str) -> str:
