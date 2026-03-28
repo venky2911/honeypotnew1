@@ -18,11 +18,14 @@ import google.generativeai as genai
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyAnv8Ne4xD4L4TZsdOwHOjdlKYY1b6UpE0')
+# Load env variables for local testing
+load_dotenv()
+
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# Determine if Gemini is configured
-gemini_available = bool(GEMINI_API_KEY)
+# Determine if Groq is configured
+groq_available = bool(GROQ_API_KEY)
 
 @dataclass
 class ExtractedIntelligence:
@@ -203,59 +206,60 @@ class AgenticHoneypot:
             "elderly_victim",
             "busy_professional"
         ]
-    
+
     def get_ai_response(self, message: str, conversation_history: List[Dict], persona: str = "curious_user") -> str:
-        """Generate AI response using Gemini or fallback to rule-based"""
-        if gemini_available:
-            return self._get_gemini_response(message, conversation_history, persona)
+        """Generate AI response using Groq or fallback to rule-based"""
+        if groq_available:
+            return self._get_groq_response(message, conversation_history, persona)
         else:
             return self._get_fallback_response(message, conversation_history)
     
-    def _get_gemini_response(self, message: str, conversation_history: List[Dict], persona: str) -> str:
-        """Generate response using official Gemini SDK with FULL CONTEXT MEMORY"""
+    def _get_groq_response(self, message: str, conversation_history: List[Dict], persona: str) -> str:
+        """Generate response using Groq API with FULL CONTEXT MEMORY"""
         try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            
             # Build conversation context
             system_prompt = self._build_context(persona)
             
-            # Use gemini-1.5-flash as it is most stable for free tiers
-            model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_prompt)
+            # Prepare messages list with System Prompt
+            messages = [{"role": "system", "content": system_prompt}]
             
-            # Prepare Gemini contents format (SDK uses dicts of role and parts)
-            contents = []
-            
-            # History
+            # Add History (Multi-Turn Fix)
             for msg in conversation_history:
+                role = "user" if msg.get('sender') == 'user' else "assistant"
                 if msg.get('text'):
-                    role = "user" if msg.get('sender') == 'user' else "model"
-                    contents.append({'role': role, 'parts': [msg['text']]})
+                     messages.append({"role": role, "content": msg['text']})
             
             # Add Current Message
-            contents.append({'role': 'user', 'parts': [message]})
+            messages.append({"role": "user", "content": message})
             
-            # Generate Response
-            response = model.generate_content(
-                contents,
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=150,
-                    temperature=0.7,
-                ),
+            headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "messages": messages,
+                "model": "llama-3.1-8b-instant",
+                "max_tokens": 150,
+                "temperature": 0.7
+            }
+            
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=10
             )
             
-            # Check for block or missing text due to safety
-            if not response.text:
-                 logger.error("Gemini API returned empty/blocked response.")
-                 return self._get_fallback_response(message, conversation_history)
-                 
-            return response.text.strip()
+            if response.status_code == 200:
+                result = response.json()
+                return result["choices"][0]["message"]["content"].strip()
+            else:
+                logger.error(f"Groq API error: {response.status_code} - {response.text}")
+                return self._get_fallback_response(message, conversation_history)
         
         except Exception as e:
-            # Check specifically for Quota Exceeded (429) to log it clearly
-            if '429' in str(e) or 'quota' in str(e).lower():
-                logger.error(f"GEMINI QUOTA EXCEEDED (429): Your free tier credits are used up. {e}")
-            else:
-                logger.error(f"Gemini SDK Exception: {e}")
+            logger.error(f"Groq Exception: {e}")
             return self._get_fallback_response(message, conversation_history)
     
     def _build_context(self, persona: str) -> str:
